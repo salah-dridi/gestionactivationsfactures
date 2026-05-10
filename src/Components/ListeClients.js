@@ -1,20 +1,24 @@
 import React, { useEffect, useState } from 'react';
-import { db } from '../firebase'
+import { db } from '../firebase';
 import { 
-    collection, query, getDocs, addDoc, where 
+    collection, query, getDocs, addDoc, where, deleteDoc, doc // *** MODIFICATION: Added deleteDoc, doc ***
 } from 'firebase/firestore';
-import { DataGrid, GridToolbar } from '@mui/x-data-grid';
+import { DataGrid, GridToolbar } from '@mui/x-data-grid'; 
 import { 
     Box, Button, Typography, Stack, Dialog, 
-    DialogTitle, DialogContent, DialogActions, TextField, Divider
+    DialogTitle, DialogContent, DialogActions, TextField, IconButton // *** MODIFICATION: Added IconButton ***
 } from '@mui/material';
 import AddIcon from '@mui/icons-material/Add';
+import DeleteIcon from '@mui/icons-material/Delete'; // *** MODIFICATION: Icons for actions ***
+import VisibilityIcon from '@mui/icons-material/Visibility';
 import Swal from 'sweetalert2';
+import { useNavigate } from 'react-router-dom'; // *** MODIFICATION: Added for navigation ***
 
 const ListeClients = () => {
     const [clients, setClients] = useState([]);
     const [loading, setLoading] = useState(true);
     const [open, setOpen] = useState(false);
+    const navigate = useNavigate(); // *** MODIFICATION: Navigation hook ***
 
     const [newClient, setNewClient] = useState({
         cin: '',
@@ -37,7 +41,6 @@ const ListeClients = () => {
             const orangeData = orangeSnap.docs.map(doc => doc.data());
 
             const finalClients = clientsList.map(client => {
-                // تأكد أن الحقل في جداول التفعيل اسمه idclient ويطابق الـ id (الـ doc.id)
                 const countOoredoo = ooredooData.filter(act => act.idclient === client.id).length;
                 const countOrange = orangeData.filter(act => act.idclient === client.id).length;
                 
@@ -60,14 +63,68 @@ const ListeClients = () => {
 
     useEffect(() => { fetchData(); }, []);
 
+    // *** MODIFICATION: Delete Function with usage check ***
+    const handleDeleteClient = async (clientId) => {
+        const result = await Swal.fire({
+            title: 'Êtes-vous sûr ?',
+            text: "Cette action est irréversible !",
+            icon: 'warning',
+            showCancelButton: true,
+            confirmButtonColor: '#d33',
+            cancelButtonColor: '#3085d6',
+            confirmButtonText: 'Oui, supprimer !',
+            cancelButtonText: 'Annuler'
+        });
+
+        if (result.isConfirmed) {
+            try {
+                // Check if client exists in other collections
+                const collectionsToCheck = [
+                    "ActivationsOrange",
+                    "ActivationsOoredoo",
+                    "FacturesAvances",
+                    "FacturesPayees"
+                ];
+
+                let isUsed = false;
+
+                for (const colName of collectionsToCheck) {
+                    const q = query(collection(db, colName), where("idclient", "==", clientId));
+                    const snap = await getDocs(q);
+                    if (!snap.empty) {
+                        isUsed = true;
+                        break;
+                    }
+                }
+
+                if (isUsed) {
+                    Swal.fire('Action Impossible', 'Ce client est lié à des factures ou des activations .', 'error');
+                    return;
+                }
+
+                await deleteDoc(doc(db, "Clients", clientId));
+                Swal.fire('Supprimé !', 'Le client a été supprimé.', 'success');
+                fetchData();
+            } catch (error) {
+                console.error("Delete Error:", error);
+                Swal.fire('Erreur', 'Une erreur est survenue lors de la suppression.', 'error');
+            }
+        }
+    };
+
     const handleAddClient = async () => {
         if (!newClient.cin || !newClient.nom || !newClient.prenom) {
             Swal.fire('Attention', 'Veuillez remplir tous les champs', 'warning');
             return;
         }
 
+        const cinRegex = /^\d{8}$/;
+        if (!cinRegex.test(newClient.cin)) {
+            Swal.fire('Attention', 'Le CIN doit contenir exactement 8 chiffres', 'warning');
+            return;
+        }
+
         try {
-            // تثبت من الـ CIN قبل التسجيل
             const q = query(collection(db, "Clients"), where("cin", "==", newClient.cin));
             const checkSnap = await getDocs(q);
             
@@ -76,7 +133,6 @@ const ListeClients = () => {
                 return;
             }
 
-            // عملية التسجيل
             const docRef = await addDoc(collection(db, "Clients"), {
                 cin: newClient.cin,
                 nom: newClient.nom,
@@ -87,42 +143,66 @@ const ListeClients = () => {
             if(docRef.id) {
                 setOpen(false);
                 setNewClient({ cin: '', nom: '', prenom: '' });
-                await fetchData(); // تحديث القائمة
+                await fetchData();
                 Swal.fire('Succès', 'Client ajouté avec succès', 'success');
             }
         } catch (e) {
             console.error("Add Error:", e);
-            Swal.fire('Erreur', "خطأ في الاتصال بقاعدة البيانات: " + e.message, 'error');
+            Swal.fire('Erreur', "Database connection error: " + e.message, 'error');
         }
     };
 
     const columns = [
-        { field: 'cin', headerName: 'CIN', width: 150 },
-        { field: 'nom', headerName: 'Nom', width: 180 },
-        { field: 'prenom', headerName: 'Prénom', width: 180 },
+        { field: 'cin', headerName: 'CIN', width: 120 },
+        { field: 'nom', headerName: 'Nom', width: 150 },
+        { field: 'prenom', headerName: 'Prénom', width: 150 },
         { 
             field: 'countOoredoo', 
-            headerName: 'Activations Ooredoo', 
-            width: 180, 
+            headerName: 'Ooredoo', 
+            width: 100, 
             renderCell: (params) => <Box sx={{ color: '#ed1c24', fontWeight: 'bold' }}>{params.value || 0}</Box>
         },
         { 
             field: 'countOrange', 
-            headerName: 'Activations Orange', 
-            width: 180, 
+            headerName: 'Orange', 
+            width: 100, 
             renderCell: (params) => <Box sx={{ color: '#ff7900', fontWeight: 'bold' }}>{params.value || 0}</Box>
         },
         { 
             field: 'totalActivations', 
             headerName: 'Total', 
-            width: 120,
+            width: 80,
             renderCell: (params) => <Box sx={{ fontWeight: 'bold' }}>{params.value || 0}</Box>
+        },
+        // *** MODIFICATION: Added Actions Column ***
+        {
+            field: 'actions',
+            headerName: 'Actions',
+            width: 150,
+            sortable: false,
+            renderCell: (params) => (
+                <Stack direction="row" spacing={1}>
+                    <IconButton 
+                        color="primary" 
+                        size="small"
+                        onClick={() => navigate(`/detailsclient/${params.row.id}`)}
+                    >
+                        <VisibilityIcon fontSize="small" />
+                    </IconButton>
+                    <IconButton 
+                        color="error" 
+                        size="small"
+                        onClick={() => handleDeleteClient(params.row.id)}
+                    >
+                        <DeleteIcon fontSize="small" />
+                    </IconButton>
+                </Stack>
+            )
         }
     ];
 
     return (
         <Box sx={{ height: '100%', width: '100%', p: 2 }}>
-            {/* التنسيق لجعل الزر على اليمين */}
             <Stack 
                 direction="row" 
                 justifyContent="space-between" 
@@ -142,7 +222,8 @@ const ListeClients = () => {
                         bgcolor: '#1a237e', 
                         '&:hover': { bgcolor: '#0d1442' },
                         textTransform: 'none',
-                        px: 3
+                        px: 3,
+                        ml: 'auto' 
                     }}
                 >
                     Ajouter Client
@@ -160,16 +241,19 @@ const ListeClients = () => {
                 />
             </Box>
 
-            {/* Dialog الحريف الجديد */}
             <Dialog open={open} onClose={() => setOpen(false)} fullWidth maxWidth="sm">
                 <DialogTitle>Nouveau Client</DialogTitle>
                 <DialogContent dividers>
                     <Stack spacing={3} sx={{ mt: 1 }}>
                         <TextField 
-                            label="Numéro CIN" 
+                            label="Numéro CIN (8 chiffres)" 
                             fullWidth 
+                            inputProps={{ maxLength: 8 }} 
                             value={newClient.cin} 
-                            onChange={(e) => setNewClient({...newClient, cin: e.target.value})} 
+                            onChange={(e) => {
+                                const val = e.target.value.replace(/\D/g, ''); 
+                                setNewClient({...newClient, cin: val});
+                            }} 
                         />
                         <TextField 
                             label="Nom" 

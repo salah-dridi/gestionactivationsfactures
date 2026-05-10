@@ -3,6 +3,10 @@ import { Box, Drawer, CssBaseline, List, ListItem, ListItemButton, ListItemIcon,
 import HomeIcon from '@mui/icons-material/Home';
 import MenuIcon from '@mui/icons-material/Menu';
 import PeopleIcon from '@mui/icons-material/People';
+import SimCardIcon from '@mui/icons-material/SimCard';
+import CreditCardIcon from '@mui/icons-material/CreditCard';
+import CreditCardOffIcon from '@mui/icons-material/CreditCardOff';
+import AlignHorizontalLeftIcon from '@mui/icons-material/AlignHorizontalLeft';
 import { useNavigate, useLocation } from 'react-router-dom';
 
 const drawerWidth = 190;
@@ -14,15 +18,20 @@ export default function MyDrawer({ children }) {
   const [open, setOpen] = React.useState(false);
 
   const liste = [
-    { text: 'Home', icon: <HomeIcon />, path: '/' },
-    { text: 'Clients', icon: <PeopleIcon />, path: '/listeclients' },
+    { text: 'Home', icon: <HomeIcon />, path: '/', color: 'white' },
+    { text: 'Clients', icon: <PeopleIcon />, path: '/listeclients', color: 'white' },
+    { text: 'Activations Orange', icon: <SimCardIcon />, path: '/activationsorange', color: '#ff7900' },
+    { text: 'Activations Ooredoo', icon: <SimCardIcon />, path: '/activationsooredoo', color: '#ed1c24' },
+    { text: 'Factures en avances', icon: <CreditCardIcon />, path: '/facturesavances', color: 'white' },
+    { text: 'Factures payées', icon: <CreditCardOffIcon />, path: '/facturespayees', color: 'white' },
+    { text: 'Liste des offres', icon: <AlignHorizontalLeftIcon />, path: '/listeoffres', color: 'white' },
   ];
 
   const getPageTitle = () => {
     const current = liste.find(item => item.path === location.pathname);
     if (current) return current.text;
-    if (location.pathname === '/detailsfacture') return 'Détails du Facture';
-    return 'Admin Dashboard';
+    else if (location.pathname === '/detailsclient') return 'Détails du Client';
+    else return 'Admin Dashboard';
   };
 
   const [visible, setVisible] = React.useState(true);
@@ -90,12 +99,20 @@ export default function MyDrawer({ children }) {
                   setOpen(false);
                 }}
                 sx={{
-                  backgroundColor: location.pathname === item.path ? '#1976d2' : 'transparent',
-                  '&:hover': { backgroundColor: location.pathname === item.path ? '#1565c0' : 'rgba(255,255,255,0.1)' },
+                  backgroundColor: location.pathname === item.path ? 'rgba(255,255,255,0.2)' : 'transparent',
+                  '&:hover': { backgroundColor: 'rgba(255,255,255,0.1)' },
                 }}
               >
-                <ListItemIcon sx={{ color: 'white' }}>{item.icon}</ListItemIcon>
-                <ListItemText primary={item.text} sx={{ color: 'white' }} />
+                <ListItemIcon sx={{ color: item.color }}>{item.icon}</ListItemIcon>
+                <ListItemText 
+                  primary={item.text} 
+                  sx={{ 
+                    '& .MuiListItemText-primary': { 
+                      color: item.color,
+                      fontWeight: location.pathname === item.path ? 'bold' : 'normal'
+                    } 
+                  }} 
+                />
               </ListItemButton>
             </ListItem>
           ))}
