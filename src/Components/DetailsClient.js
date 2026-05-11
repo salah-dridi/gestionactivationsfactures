@@ -3,12 +3,13 @@ import { useParams } from 'react-router-dom';
 import { db } from '../firebase';
 import { 
     doc, getDoc, updateDoc, collection, query, 
-    where, getDocs, deleteDoc, setDoc 
+    where, getDocs, deleteDoc, addDoc 
 } from 'firebase/firestore';
 import { 
     Box, Typography, Paper, Table, TableBody, TableCell, 
     TableContainer, TableHead, TableRow, Button, IconButton, 
-    TextField, Dialog, DialogTitle, DialogContent, DialogActions, Stack 
+    TextField, Dialog, DialogTitle, DialogContent, DialogActions, Stack,
+    MenuItem, Select, FormControl, InputLabel
 } from '@mui/material';
 import DeleteIcon from '@mui/icons-material/Delete';
 import EditIcon from '@mui/icons-material/Edit';
@@ -21,18 +22,37 @@ const DetailsClient = () => {
     const [client, setClient] = useState(null);
     const [activations, setActivations] = useState([]);
     const [loading, setLoading] = useState(true);
+    const [allOffres, setAllOffres] = useState([]); 
 
-    // State for editing Client main info (Nom, Prenom)
     const [isEditingClient, setIsEditingClient] = useState(false);
     const [tempClient, setTempClient] = useState({});
 
-    // Dialog state for adding characteristic
     const [openChar, setOpenChar] = useState(false);
     const [newChar, setNewChar] = useState({ key: '', value: '' });
 
-    // State for inline editing in activations
+    // States for adding a new activation
+    const [openAddActivation, setOpenAddActivation] = useState(false);
+    const [newActivation, setNewActivation] = useState({ numero: '', operator: '', offre: '' });
+
     const [editIdx, setEditIdx] = useState(null);
     const [editData, setEditData] = useState({});
+
+    const availableKeys = [
+        "Civilité",
+        "Date d'émission",
+        "Date de naissance",
+        "Adresse",
+        "Tel"
+    ];
+
+    const dateFieldStyle = {
+        "& input::-webkit-calendar-picker-indicator": { cursor: 'pointer' },
+        "& .MuiInputLabel-root": {
+            transform: 'translate(14px, -9px) scale(0.75)',
+            backgroundColor: 'white',
+            padding: '0 4px'
+        }
+    };
 
     useEffect(() => {
         fetchClientData();
@@ -45,8 +65,12 @@ const DetailsClient = () => {
             if (clientDoc.exists()) {
                 const data = { id: clientDoc.id, ...clientDoc.data() };
                 setClient(data);
-                setTempClient(data); // Sync temp state
+                setTempClient(data);
             }
+
+            const offresSnap = await getDocs(collection(db, "Offres"));
+            const offresList = offresSnap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+            setAllOffres(offresList);
 
             const [orangeSnap, ooredooSnap] = await Promise.all([
                 getDocs(query(collection(db, "ActivationsOrange"), where("idclient", "==", id))),
@@ -64,31 +88,32 @@ const DetailsClient = () => {
         }
     };
 
-    // --- Fiche Client Main Info Logic ---
     const handleSaveClientInfo = async () => {
         try {
             await updateDoc(doc(db, "Clients", id), {
                 nom: tempClient.nom,
-                prenom: tempClient.prenom
+                prenom: tempClient.prenom,
+                features: tempClient.features || {}
             });
-            setClient({ ...client, nom: tempClient.nom, prenom: tempClient.prenom });
+            setClient({ ...tempClient });
             setIsEditingClient(false);
             Swal.fire('Succès', 'Informations client mises à jour', 'success');
         } catch (error) {
-            Swal.fire('Erreur', 'Echec de modification', 'error');
+            Swal.fire('Erreur', 'Échec de modification', 'error');
         }
     };
 
-    // --- Fiche Client Features Logic ---
     const handleAddChar = async () => {
         if (!newChar.key || !newChar.value) return;
-        if (client.features && client.features[newChar.key]) {
-            Swal.fire('Erreur', 'Cette caractéristique existe déjà', 'error');
+        if (newChar.key === "Tel" && !/^\d{8}$/.test(newChar.value)) {
+            Swal.fire('Erreur', 'Le numéro de téléphone doit contenir exactement 8 chiffres', 'error');
             return;
         }
         const updatedFeatures = { ...(client.features || {}), [newChar.key]: newChar.value };
         await updateDoc(doc(db, "Clients", id), { features: updatedFeatures });
-        setClient({ ...client, features: updatedFeatures });
+        const updatedClient = { ...client, features: updatedFeatures };
+        setClient(updatedClient);
+        setTempClient(updatedClient); 
         setOpenChar(false);
         setNewChar({ key: '', value: '' });
         Swal.fire('Succès', 'Caractéristique ajoutée', 'success');
@@ -97,10 +122,55 @@ const DetailsClient = () => {
     const handleDeleteChar = async (keyToDelete) => {
         const { [keyToDelete]: removed, ...remainingFeatures } = client.features;
         await updateDoc(doc(db, "Clients", id), { features: remainingFeatures });
-        setClient({ ...client, features: remainingFeatures });
+        const updatedClient = { ...client, features: remainingFeatures };
+        setClient(updatedClient);
+        setTempClient(updatedClient);
     };
 
-    // --- Activations Logic ---
+
+    const handleAddActivation = async () => {
+        if (!newActivation.numero || !newActivation.operator || !newActivation.offre) {
+            Swal.fire('Erreur', 'Veuillez remplir tous les champs', 'error');
+            return;
+        }
+        if (!/^\d{8}$/.test(newActivation.numero)) {
+            Swal.fire('Erreur', 'Le numéro doit contenir 8 chiffres', 'error');
+            return;
+        }
+
+        try {
+            // 1. Check if number exists in both collections before adding
+            const checkOrange = query(collection(db, "ActivationsOrange"), where("numero", "==", newActivation.numero));
+            const checkOoredoo = query(collection(db, "ActivationsOoredoo"), where("numero", "==", newActivation.numero));
+
+            const [snapOrange, snapOoredoo] = await Promise.all([
+                getDocs(checkOrange),
+                getDocs(checkOoredoo)
+            ]);
+
+            if (!snapOrange.empty || !snapOoredoo.empty) {
+                Swal.fire('Erreur', 'Ce numéro existe déjà dans la base de données (Orange ou Ooredoo)', 'error');
+                return;
+            }
+
+            // 2. If number doesn't exist, proceed with addition
+            const collectionName = newActivation.operator === 'Orange' ? "ActivationsOrange" : "ActivationsOoredoo";
+            await addDoc(collection(db, collectionName), {
+                numero: newActivation.numero,
+                offre: newActivation.offre,
+                idclient: id
+            });
+
+            setOpenAddActivation(false);
+            setNewActivation({ numero: '', operator: '', offre: '' });
+            fetchClientData();
+            Swal.fire('Succès', 'Activation ajoutée avec succès', 'success');
+        } catch (error) {
+            console.error("Error adding activation:", error);
+            Swal.fire('Erreur', 'Erreur lors de l\'ajout', 'error');
+        }
+    };
+
     const startEdit = (idx, item) => {
         setEditIdx(idx);
         setEditData({ ...item });
@@ -108,6 +178,10 @@ const DetailsClient = () => {
 
     const saveEdit = async (item) => {
         try {
+            if (!/^\d{8}$/.test(editData.numero)) {
+                Swal.fire('Erreur', 'Le numéro doit contenir exactement 8 chiffres', 'error');
+                return;
+            }
             const collectionName = item.operator === 'Orange' ? "ActivationsOrange" : "ActivationsOoredoo";
             const { id: docId, operator, ...dataToUpdate } = editData;
             await updateDoc(doc(db, collectionName, docId), dataToUpdate);
@@ -115,7 +189,7 @@ const DetailsClient = () => {
             fetchClientData();
             Swal.fire('Mis à jour', 'L\'activation a été modifiée', 'success');
         } catch (error) {
-            Swal.fire('Erreur', 'Echec de modification', 'error');
+            Swal.fire('Erreur', 'Échec de modification', 'error');
         }
     };
 
@@ -125,7 +199,8 @@ const DetailsClient = () => {
             text: "Toute la ligne sera supprimée !",
             icon: 'warning',
             showCancelButton: true,
-            confirmButtonText: 'Oui, supprimer'
+            confirmButtonText: 'Oui, supprimer',
+            cancelButtonText: 'Annuler'
         });
         if (result.isConfirmed) {
             const collectionName = item.operator === 'Orange' ? "ActivationsOrange" : "ActivationsOoredoo";
@@ -144,7 +219,6 @@ const DetailsClient = () => {
                 Détails Client : {client.nom} {client.prenom}
             </Typography>
 
-            {/* --- SECTION 1: FICHE CLIENT --- */}
             <Paper sx={{ p: 2, mb: 4, borderRadius: 2 }}>
                 <Stack direction="row" justifyContent="space-between" alignItems="center" mb={2}>
                     <Typography variant="h6" sx={{ fontWeight: 'bold' }}>Fiche Client</Typography>
@@ -173,7 +247,6 @@ const DetailsClient = () => {
                             </TableRow>
                         </TableHead>
                         <TableBody>
-                            {/* Static Fields: Nom, Prenom, CIN */}
                             <TableRow>
                                 <TableCell>Nom</TableCell>
                                 <TableCell>
@@ -198,11 +271,37 @@ const DetailsClient = () => {
                                 <TableCell align="right">-</TableCell>
                             </TableRow>
                             
-                            {/* Dynamic Features */}
                             {client.features && Object.entries(client.features).map(([key, val]) => (
                                 <TableRow key={key}>
                                     <TableCell>{key}</TableCell>
-                                    <TableCell>{val}</TableCell>
+                                    <TableCell>
+                                        {isEditingClient ? (
+                                            key === "Civilité" ? (
+                                                <Select
+                                                    size="small"
+                                                    value={tempClient.features[key]}
+                                                    onChange={(e) => setTempClient({
+                                                        ...tempClient,
+                                                        features: { ...tempClient.features, [key]: e.target.value }
+                                                    })}
+                                                >
+                                                    <MenuItem value="Homme">Homme</MenuItem>
+                                                    <MenuItem value="Femme">Femme</MenuItem>
+                                                </Select>
+                                            ) : (
+                                                <TextField 
+                                                    size="small" 
+                                                    type={key.includes("Date") ? "date" : "text"}
+                                                    sx={key.includes("Date") ? dateFieldStyle : {}}
+                                                    value={tempClient.features[key]} 
+                                                    onChange={(e) => setTempClient({
+                                                        ...tempClient, 
+                                                        features: { ...tempClient.features, [key]: e.target.value }
+                                                    })} 
+                                                />
+                                            )
+                                        ) : val}
+                                    </TableCell>
                                     <TableCell align="right">
                                         <IconButton color="error" onClick={() => handleDeleteChar(key)}>
                                             <DeleteIcon fontSize="small" />
@@ -215,9 +314,19 @@ const DetailsClient = () => {
                 </TableContainer>
             </Paper>
 
-            {/* --- SECTION 2: LISTE DES ACTIVATIONS --- */}
             <Paper sx={{ p: 2, borderRadius: 2 }}>
-                <Typography variant="h6" sx={{ fontWeight: 'bold', mb: 2 }}>Liste des activations</Typography>
+                <Stack direction="row" justifyContent="space-between" alignItems="center" mb={2}>
+                    <Typography variant="h6" sx={{ fontWeight: 'bold' }}>Liste des activations</Typography>
+                    <Button 
+                        startIcon={<AddIcon />} 
+                        variant="contained" 
+                        color="primary" 
+                        onClick={() => setOpenAddActivation(true)}
+                    >
+                        Ajouter Activation
+                    </Button>
+                </Stack>
+
                 {activations.length === 0 ? (
                     <Typography sx={{ py: 4, textAlign: 'center', color: 'gray', fontStyle: 'italic' }}>
                         Aucune activation
@@ -257,11 +366,18 @@ const DetailsClient = () => {
                                         </TableCell>
                                         <TableCell>
                                             {editIdx === index ? (
-                                                <TextField 
-                                                    size="small" 
-                                                    value={editData.offre} 
+                                                <Select
+                                                    size="small"
+                                                    fullWidth
+                                                    value={editData.offre || ''}
                                                     onChange={(e) => setEditData({...editData, offre: e.target.value})}
-                                                />
+                                                >
+                                                    {allOffres.map((off) => (
+                                                        <MenuItem key={off.id} value={off.nom || off.name || off.title}>
+                                                            {off.nom || off.name || off.title}
+                                                        </MenuItem>
+                                                    ))}
+                                                </Select>
                                             ) : item.offre}
                                         </TableCell>
                                         <TableCell align="right">
@@ -286,26 +402,108 @@ const DetailsClient = () => {
                 )}
             </Paper>
 
-            {/* Dialog for New Feature */}
-            <Dialog open={openChar} onClose={() => setOpenChar(false)}>
+            {/* Dialog Ajouter Caractéristique */}
+            <Dialog open={openChar} onClose={() => setOpenChar(false)} fullWidth maxWidth="xs">
                 <DialogTitle>Ajouter Caractéristique</DialogTitle>
-                <DialogContent>
-                    <Stack spacing={2} sx={{ mt: 1 }}>
-                        <TextField 
-                            label="Nom (Key)" fullWidth 
-                            value={newChar.key}
-                            onChange={(e) => setNewChar({...newChar, key: e.target.value})}
-                        />
-                        <TextField 
-                            label="Valeur" fullWidth 
-                            value={newChar.value}
-                            onChange={(e) => setNewChar({...newChar, value: e.target.value})}
-                        />
+                <DialogContent dividers>
+                    <Stack spacing={3} sx={{ mt: 1 }}>
+                        <FormControl fullWidth>
+                            <InputLabel>Champ (Key)</InputLabel>
+                            <Select
+                                label="Champ (Key)"
+                                value={newChar.key}
+                                onChange={(e) => setNewChar({ key: e.target.value, value: '' })}
+                            >
+                                {availableKeys
+                                    .filter(k => !client.features || !client.features[k])
+                                    .map(k => (
+                                        <MenuItem key={k} value={k}>{k}</MenuItem>
+                                    ))
+                                }
+                            </Select>
+                        </FormControl>
+                        {newChar.key === "Civilité" ? (
+                            <FormControl fullWidth>
+                                <InputLabel>Valeur</InputLabel>
+                                <Select
+                                    label="Valeur"
+                                    value={newChar.value}
+                                    onChange={(e) => setNewChar({...newChar, value: e.target.value})}
+                                >
+                                    <MenuItem value="Homme">Homme</MenuItem>
+                                    <MenuItem value="Femme">Femme</MenuItem>
+                                </Select>
+                            </FormControl>
+                        ) : (
+                            <TextField 
+                                label="Valeur" 
+                                fullWidth 
+                                type={newChar.key.includes("Date") ? "date" : "text"}
+                                InputLabelProps={newChar.key.includes("Date") ? { shrink: true } : {}}
+                                sx={newChar.key.includes("Date") ? dateFieldStyle : {}}
+                                value={newChar.value}
+                                onChange={(e) => setNewChar({...newChar, value: e.target.value})}
+                                helperText={newChar.key === "Tel" ? "8 chiffres requis" : ""}
+                            />
+                        )}
                     </Stack>
                 </DialogContent>
-                <DialogActions>
+                <DialogActions sx={{ p: 2 }}>
                     <Button onClick={() => setOpenChar(false)}>Annuler</Button>
-                    <Button onClick={handleAddChar} variant="contained">Ajouter</Button>
+                    <Button onClick={handleAddChar} variant="contained" disabled={!newChar.key || !newChar.value}>
+                        Ajouter
+                    </Button>
+                </DialogActions>
+            </Dialog>
+
+            {/* Dialog Ajouter Activation */}
+            <Dialog open={openAddActivation} onClose={() => setOpenAddActivation(false)} fullWidth maxWidth="xs">
+                <DialogTitle>Ajouter une nouvelle activation</DialogTitle>
+                <DialogContent dividers>
+                    <Stack spacing={3} sx={{ mt: 1 }}>
+                        <TextField 
+                            label="Numéro" 
+                            fullWidth 
+                            value={newActivation.numero}
+                            onChange={(e) => setNewActivation({...newActivation, numero: e.target.value})}
+                        />
+                        <FormControl fullWidth>
+                            <InputLabel>Opérateur</InputLabel>
+                            <Select
+                                label="Opérateur"
+                                value={newActivation.operator}
+                                onChange={(e) => setNewActivation({...newActivation, operator: e.target.value})}
+                            >
+                                <MenuItem value="Orange">Orange</MenuItem>
+                                <MenuItem value="Ooredoo">Ooredoo</MenuItem>
+                            </Select>
+                        </FormControl>
+                        <FormControl fullWidth>
+                            <InputLabel>Offre</InputLabel>
+                            <Select
+                                label="Offre"
+                                value={newActivation.offre}
+                                onChange={(e) => setNewActivation({...newActivation, offre: e.target.value})}
+                            >
+                                {allOffres.map((off) => (
+                                    <MenuItem key={off.id} value={off.nom || off.name || off.title}>
+                                        {off.nom || off.name || off.title}
+                                    </MenuItem>
+                                ))}
+                            </Select>
+                        </FormControl>
+                    </Stack>
+                </DialogContent>
+                <DialogActions sx={{ p: 2 }}>
+                    <Button onClick={() => setOpenAddActivation(false)}>Annuler</Button>
+                    <Button 
+                        onClick={handleAddActivation} 
+                        variant="contained" 
+                        color="primary"
+                        disabled={!newActivation.numero || !newActivation.operator || !newActivation.offre}
+                    >
+                        Enregistrer
+                    </Button>
                 </DialogActions>
             </Dialog>
         </Box>
